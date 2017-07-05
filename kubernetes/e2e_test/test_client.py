@@ -61,14 +61,20 @@ class TestClient(unittest.TestCase):
         self.assertEqual(name, resp.metadata.name)
         self.assertTrue(resp.status.phase)
 
-        while True:
+        succeed = False
+        last_state = None
+        for tries in range(60):
             resp = api.read_namespaced_pod(name=name,
                                            namespace='default')
             self.assertEqual(name, resp.metadata.name)
             self.assertTrue(resp.status.phase)
             if resp.status.phase != 'Pending':
+                succeed = True
                 break
+            last_state = resp
             time.sleep(1)
+
+        self.assertTrue(succeed, "Last response: %s" % str(last_state))
 
         exec_command = ['/bin/sh',
                         '-c',

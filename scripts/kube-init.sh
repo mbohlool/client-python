@@ -16,20 +16,6 @@
 
 set -x
 
-function clean_exit(){
-    local error_code="$?"
-    local spawned=$(jobs -p)
-    if [ -n "$spawned" ]; then
-        sudo kill $(jobs -p)
-    fi
-    return $error_code
-}
-
-trap "clean_exit" EXIT
-
-# Switch off SE-Linux
-setenforce 0
-
 # Install docker if needed
 path_to_executable=$(which docker)
 if [ -x "$path_to_executable" ] ; then
@@ -38,37 +24,48 @@ else
     curl -sSL https://get.docker.io | sudo bash
 fi
 docker --version
-
-# Get the latest stable version of kubernetes
-export K8S_VERSION=$(curl -sS https://storage.googleapis.com/kubernetes-release/release/stable.txt)
-echo "K8S_VERSION : ${K8S_VERSION}"
-
-echo "Starting docker service"
-sudo systemctl enable docker.service
-sudo systemctl start docker.service --ignore-dependencies
-echo "Checking docker service"
 sudo docker ps
+docker ps
 
-echo "Download Kubernetes CLI"
-wget -O kubectl "http://storage.googleapis.com/kubernetes-release/release/${K8S_VERSION}/bin/linux/amd64/kubectl"
-sudo chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
+if ! which minikube > /dev/null 2>&1; then
 
-echo "Download localkube from minikube project"
-wget -O localkube "https://storage.googleapis.com/minikube/k8sReleases/v1.6.0-alpha.0/localkube-linux-amd64"
-sudo chmod +x localkube
-sudo mv localkube /usr/local/bin/
+    echo "Cannot find minikube. Starting minikube CI version ..."
 
-echo "Starting localkube"
-sudo nohup localkube --logtostderr=true --enable-dns=false > localkube.log 2>&1 &
+    # Copied from https://github.com/kubernetes/minikube#linux-ci-installation-which-supports-running-in-a-vm-example-w-kubectl-installation
 
-echo "Waiting for localkube to start..."
-if ! timeout 120 sh -c "while ! curl -ks https://127.0.0.1:8443/ >/dev/null; do sleep 1; done"; then
-    sudo cat localkube.log
-    die $LINENO "localkube did not start"
+    curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && chmod +x minikube
+    curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+    export MINIKUBE_WANTUPDATENOTIFICATION=false
+    export MINIKUBE_WANTREPORTERRORPROMPT=false
+    export MINIKUBE_HOME=~
+    export CHANGE_MINIKUBE_NONE_USER=true
+    mkdir ~/.kube || true
+    touch ~/.kube/config
+
+    export KUBECONFIG=~/.kube/config
+    sudo -E ./minikube start --vm-driver=none --use-vendored-driver
+
+    # this for loop waits until kubectl can access the api server that minikube has created
+    for i in {1..150} # timeout for 5 minutes
+    do
+       kubectl get po
+       if [ $? -ne 1 ]; then
+          break
+      fi
+      sleep 2
+    done
+
+else
+
+    echo "Found minikube, make sure it is tarted before running this script."
+    export KUBECONFIG=~/.kube/config
+
 fi
 
+# kubectl commands are now able to interact with minikube cluster
 echo "Dump Kubernetes Objects..."
+kubectl cluster-info
 kubectl get componentstatuses
 kubectl get configmaps
 kubectl get daemonsets
@@ -91,7 +88,11 @@ kubectl get replicationcontrollers
 kubectl get secrets
 kubectl get serviceaccounts
 kubectl get services
+kubectl get componentstatuses
+kubectl get nodes
+kubectl describe nodes
 
+./minikube logs
 
 echo "Running tests..."
 set -x -e

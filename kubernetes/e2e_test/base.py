@@ -36,7 +36,6 @@ def get_e2e_configuration():
                 urllib3.PoolManager().request('GET', url)
                 config.host = url
                 config.verify_ssl = False
-                urllib3.disable_warnings()
                 break
             except urllib3.exceptions.HTTPError:
                 pass
